@@ -1,0 +1,59 @@
+name: Test OCI OIDC authentication
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Set up OCI authentication
+        id: oci
+        uses: devopshouse/oci-oidc-auth-config@v1
+        with:
+          config_json: ${{ secrets.OCI_CONFIG_JSON }}
+          oidc_audience: https://cloud.oracle.com
+          oci_profile: DEFAULT
+
+      - name: Check CLI authentication mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          oci --version
+          test "$OCI_CLI_AUTH" = "security_token"
+          echo "OCI CLI is configured for security-token authentication."
+
+      - name: List compute instances in the test compartment
+        shell: bash
+        env:
+          TEST_COMPARTMENT: ${{ steps.oci.outputs.oci_compartment_id }}
+          TEST_REGION: ${{ steps.oci.outputs.oci_region }}
+        run: |
+          set -euo pipefail
+          oci db autonomous-database list \
+            --auth security_token \
+            --profile DEFAULT \
+            --region "$TEST_REGION" \
+            --compartment-id "$TEST_COMPARTMENT" \
+            --all \
+            --query 'data[].{Name:"display-name",OCID:id,State:"lifecycle-state"}' \
+            --output table
+
+      - name: Remove temporary session credentials
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$HOME/.oci/oci-upst" \
+                "$HOME/.oci/upst_private_key.pem" \
+                "$HOME/.oci/config" \
+                "$HOME/.oci/oci_cli_rc" \
+                token-response.json \
+                private_key.pem \
+                public_key.pem
